@@ -156,7 +156,7 @@ for ii = 1:MAX_ITER
 
     % set max values of fi_z (workaround)
     Fzd = Ud([3 6 9 12],i_hor);
-    fi_z_lb = 0.5 * Fzd;
+    fi_z_lb = -0.5 * Fzd;
     fi_z_ub = 1.5 * Fzd;
     %fi_z_lb = -[40;40;40;40];
     %fi_z_ub = [40;40;40;40];
@@ -224,12 +224,12 @@ for ii = 1:MAX_ITER
     STORAGE = [STORAGE, Storage];
     
     
-    Qx = 1e3*eye(3);
-    Qv = 1e3*eye(3,3);
-    Qr = 1e6*eye(9,9);
-    Qw = 1e6*eye(3,3);
+    Qx = 1e6*eye(3);
+    Qv = 1e6*eye(3);
+    Qr = 1e6*eye(9);
+    Qw = 1e6*eye(3);
     Q = blkdiag(Qx, Qv, Qr, Qw);
-    Ru = [1 0 0;0 1 0;0 0 1e6]; % Ru for one f
+    Ru = 1e-3*eye(3); % Ru for one f
     Ru = blkdiag(Ru, Ru, Ru, Ru);
 
     % warm start
@@ -249,19 +249,7 @@ for ii = 1:MAX_ITER
         R'*(r1_hat*f1 + r2_hat*f2 + r3_hat*f3 + r4_hat*f4) == M_net_right,
 
         % Storage function constraint
-        STORAGE(end) <= value(STORAGE(end-1)) - slack(8),
-
-%         % ES plane constraint 1 (in body frame) 
-%         r21' * (M_net_right - R'*r1_hat*f_net) == ...
-%         r21' * R'*((r2_hat-r1_hat)*f2 + (r3_hat-r1_hat)*f3 + (r4_hat-r1_hat)*f4),
-%         
-%         % ES plane constraint 2 (in body frame) 
-%         r31' * (M_net_right - R'*r1_hat*f_net) == ...
-%         r31' * R'*((r2_hat-r1_hat)*f2 + (r3_hat-r1_hat)*f3 + (r4_hat-r1_hat)*f4),
-%         
-%         % ES plane constraint 3 (in body frame) 
-%         r41' * (M_net_right - R'*r1_hat*f_net) == ...
-%         r41' * R'*((r2_hat-r1_hat)*f2 + (r3_hat-r1_hat)*f3 + (r4_hat-r1_hat)*f4), 
+        STORAGE(end) <= value(STORAGE(end-1)) - slack(8), 
   
         % Friction constraints (using linear friction pyramid)
         -p.mu*fi_z <= fi_x <= p.mu*fi_z,
@@ -359,6 +347,19 @@ toc
 %     Uext = [Uext;repmat(u_ext',[lent,1])];
 %     FSMout = [FSMout;repmat(FSM',[lent,1])];
 % end
+
+% past constraint which are not useful
+%         % ES plane constraint 1 (in body frame) 
+%         r21' * (M_net_right - R'*r1_hat*f_net) == ...
+%         r21' * R'*((r2_hat-r1_hat)*f2 + (r3_hat-r1_hat)*f3 + (r4_hat-r1_hat)*f4),
+%         
+%         % ES plane constraint 2 (in body frame) 
+%         r31' * (M_net_right - R'*r1_hat*f_net) == ...
+%         r31' * R'*((r2_hat-r1_hat)*f2 + (r3_hat-r1_hat)*f3 + (r4_hat-r1_hat)*f4),
+%         
+%         % ES plane constraint 3 (in body frame) 
+%         r41' * (M_net_right - R'*r1_hat*f_net) == ...
+%         r41' * R'*((r2_hat-r1_hat)*f2 + (r3_hat-r1_hat)*f3 + (r4_hat-r1_hat)*f4),
 %% Animation
 % generate animation with ENERGY SHAPING Control with u_ES_out
 [t,EA,EAd] = fig_animate(tout,Xout,U_ES_out,Xdout,Udout,Uext,p);
