@@ -53,7 +53,7 @@ p.flag_movie = 1;       % 1 - make movie
 use_qpSWIFT = 0;        % 0 - quadprog, 1 - qpSWIFT (external)
 
 dt_sim = p.simTimeStep;
-SimTimeDuration = 5;  % [sec]
+SimTimeDuration = 2;  % [sec]
 MAX_ITER = floor(SimTimeDuration/p.simTimeStep);
 
 % desired trajectory
@@ -160,15 +160,21 @@ for ii = 1:MAX_ITER
     ex = x - xd;
     ev = v - vd;
 
+    % integral error
+    KI_pos = 1; KI_ang = 1;
+    p_pos = 1; p_ang = 1;
+    eI_pos = ev + p_pos * ex;
+    eI_ang = eW_right + p_ang * eR_right;
+
     % set max values of fi_z (workaround)
-    fi_z_lb = -[40;40;40;40];
-    fi_z_ub = [40;40;40;40];
+    %fi_z_lb = -[40;40;40;40];
+    %fi_z_ub = [40;40;40;40];
 
     % this constraint makes solution infeasible
     % But, this is the right way to add bounds on fz
-    %Fzd = Ud([3 6 9 12],i_hor);
-    %fi_z_lb = -2 * Fzd;
-    %fi_z_ub = 2 * Fzd;
+    Fzd = Ud([3 6 9 12],i_hor);
+    fi_z_lb = -10 * max(Fzd);
+    fi_z_ub = 10 * max(Fzd);
 
     % set up selection matrix (makes problem infeasible)
     % S = 1 if feet not in contant
@@ -203,12 +209,12 @@ for ii = 1:MAX_ITER
     Objective = norm(Ud(:,i_hor)-fi, 2);
     
     Constraints = [
-        [Rd'*Kr*eR_left + Kw*eW_left + M_net == hatMap(wd)*p.J*w]:'ES constaint 1 left',
+        [Rd'*Kr*eR_left + Kw*eW_left + KI_ang*eI_ang + M_net == hatMap(wd)*p.J*w]:'ES constaint 1 left',
 
 %         [Kr*eR_right + Kw*eW_right + M_net ...        
 %         == hatMap(w)*p.J*(R_error_right'*wd)]:'ES constaint 1 right',
        
-        [f_net + Kp*ex + Kd*ev == p.mass*([p.acc_d;0;0]) + p.mass*[0;0;p.g]]:'ES constraint 2'
+        [f_net + Kp*ex + Kd*ev + KI_pos*eI_pos == p.mass*([p.acc_d;0;0]) + p.mass*[0;0;p.g]]:'ES constraint 2'
 
         % Constraints to make f_z positive for all 4 legs
         %[fi_z >= 0]:'Enforce positivity of fi_z',

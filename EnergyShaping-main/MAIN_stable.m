@@ -48,12 +48,12 @@ addpath fcns fcns_MPC
 % 0-trot; 1-bound; 2-pacing 3-gallop; 4-trot run; 5-crawl
 gait = 0;
 p = get_params(gait);
-p.playSpeed = 1;
+p.playSpeed = 5;
 p.flag_movie = 1;       % 1 - make movie
 use_qpSWIFT = 0;        % 0 - quadprog, 1 - qpSWIFT (external)
 
 dt_sim = p.simTimeStep;
-SimTimeDuration = 5;  % [sec]
+SimTimeDuration = 2;  % [sec]
 MAX_ITER = floor(SimTimeDuration/p.simTimeStep);
 
 % desired trajectory

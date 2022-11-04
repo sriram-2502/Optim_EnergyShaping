@@ -44,12 +44,12 @@ addpath fcns fcns_MPC
 % 0-trot; 1-bound; 2-pacing 3-gallop; 4-trot run; 5-crawl
 gait = 0;
 p = get_params(gait);
-p.playSpeed = 1;
+p.playSpeed = 3;
 p.flag_movie = 1;       % 1 - make movie
 use_qpSWIFT = 0;        % 0 - quadprog, 1 - qpSWIFT (external)
 
 dt_sim = p.simTimeStep;
-SimTimeDuration = 2;  % [sec]
+SimTimeDuration = 1;  % [sec]
 MAX_ITER = floor(SimTimeDuration/p.simTimeStep);
 
 % desired trajectory
@@ -84,6 +84,8 @@ KP = []; KD = [];
 KW = []; KR = [];
 Slack = []; STORAGE = 10;
 ER = []; EW = []; Change = [];
+V = [0;0;0];
+eI_pos = 0; eI_ang = 0;
 
 for ii = 1:MAX_ITER
     % --- time vector ---
@@ -127,6 +129,8 @@ for ii = 1:MAX_ITER
     w = Xt(16:18); % get angular velocity in body frame wb
     x = Xt(1:3); % get position x
     v = Xt(4:6); % get velocity v
+    V = [V,v]; 
+    a = (V(:,end) - V(:,end-1)) / dt_sim;
     R = reshape(Xt(7:15),[3,3]); % Rotation matrix R
     X_cur = [x;v;Xt(7:15);w];
 
@@ -154,12 +158,15 @@ for ii = 1:MAX_ITER
     ex = x - xd;
     ev = v - vd;
 
-    % set max values of fi_z (workaround)
+    % integral error
+    p_pos = 1; p_ang = 1;
+    eI_pos = eI_pos + ev + p_pos * ex;
+    eI_ang = eI_ang + eW_right + p_ang * eR_right;
+
+    % set max values of fi_z
     Fzd = Ud([3 6 9 12],i_hor);
-    fi_z_lb = -0.5 * Fzd;
-    fi_z_ub = 1.5 * Fzd;
-    %fi_z_lb = -[40;40;40;40];
-    %fi_z_ub = [40;40;40;40];
+    fi_z_lb = 0 * Fzd;
+    fi_z_ub = 2 * Fzd;
 
     % set up selection matrix (makes problem infeasible)
     % S = 0 if feet not in contant
@@ -169,31 +176,30 @@ for ii = 1:MAX_ITER
     %% YALMIP for Energy Shpaing optimiation   
     fi = sdpvar(3,4);
 
-    Kp_nom = [1e2 0 0;0 1e2 0;0 0 1e2];
-    Kr_nom = [10 10 10]'; % check ki + kj > 0
+    %Kp_nom = [1e2 0 0;0 1e2 0;0 0 1e2];
+    %Kr_nom = [10 10 10]'; % check ki + kj > 0
     Kp = sdpvar(3,3,'full'); % fix 
     Kd = sdpvar(3,3,'full');
     Kr = sdpvar(3,1); % fix
     Kw = sdpvar(3,3,'full');
-    slack = sdpvar(8,1);
-    
-    assign(Kp,Kp_nom);
-    assign(Kr,Kr_nom);
+    Ki_pos = [1;1;1];
+    Ki_ang = [1;1;1];
+    slack = sdpvar(7,1);
+   
     KP = [KP, Kp];
     KR = [KR, Kr];
 
     % change Kp Kr only when contact changes
-    change = 0;
-    if(ii>1)
-        change = 1;
-        if(any(Ud_ref(:,end-1)~=Ud_ref(:,end)))
-            change = 0; % if ref does not change, dont penalize
-        end
-    end
-    Change = [Change, change];
+    %change = 0;
+    %if(ii>1)
+    %    change = 1e6;
+    %    if(any(Ud_ref(:,end-1)~=Ud_ref(:,end)))
+    %        change = 0; % if ref does not change, dont penalize
+    %    end
+    %end
+    %Change = [Change, change];
 
     % get only the stance feet
-    % this leads to infeasible solution
     idx = any(reshape(S,3,4));
     stance_feet = ones(3,4).*idx;
     fi = fi.*stance_feet; %select only the feet in stance 
@@ -212,44 +218,53 @@ for ii = 1:MAX_ITER
     
     % calculate overall net force and moment based on geometric control
     f_net = f1 + f2 + f3 + f4;
-    M_net_right = -diag(Kr)*eR_right - Kw*eW_right + hatMap(w)*p.J*(R_error_right'*wd);
+    f_net = dot(f_net,R*[0;0;1]); %body frame
+
+    M_net_right = -diag(Kr)*eR_right - Kw*eW_right - diag(Ki_ang)*eI_ang + hatMap(w)*p.J*(R_error_right'*wd);
     %M_net_left = -Rd'*diag(Kr)*eR_left - Kw*eW_left + hatMap(wd)*p.J*w;
 
+    % M from geometric control of quadrotor
+%     M_net_right = - diag(Kr)*eR_right ...
+%                   - Kw*eW_right ...
+%                   - diag(Ki_ang)*eI_ang ...
+%                   + hatMap(R_error_right'*wd)*p.J*(R_error_right'*wd);
+   
     % calculate storage function as a function of Kp and Kr
-    S1 = 0.5*norm(eW_right,2)^2;
-    S2 = 0.5*trace(diag(Kr)*(eye(3)-eR_right)); % function of Kr
-    S3 = 0.5*p.mass*norm(v-vd)^2;
-    S4 = 0.5*x'*Kp*x;% function of Kp
-    Storage = S1 + S2 + S3 + S4;
-    STORAGE = [STORAGE, Storage];
-    
+    %S1 = 0.5*norm(eW_right,2)^2;
+    %S2 = 0.5*trace(diag(Kr)*(eye(3)-eR_right)); % function of Kr
+    %S3 = 0.5*p.mass*norm(v-vd)^2;
+    %S4 = 0.5*x'*Kp*x;% function of Kp
+    %Storage = S1 + S2 + S3 + S4;
+    %STORAGE = [STORAGE, Storage];
     
     Qx = 1e6*eye(3);
-    Qv = 1e6*eye(9);
+    Qv = 1e6*eye(3);
     Qr = 1e6*eye(9);
     Qw = 1e6*eye(3);
     Q = blkdiag(Qx, Qv, Qr, Qw);
-    Ru = 1e-3*eye(3); % Ru for one f
+    Ru = 1e-6*eye(3); % Ru for one f
     Ru = blkdiag(Ru, Ru, Ru, Ru);
 
     % warm start
-    assign(fi,Ud(:,i_hor));
-   
+    %assign(fi,Ud(:,i_hor));
+    %assign(Kp,Kp_nom);
+    %assign(Kr,Kr_nom);   
 
     Objective = (X_cur-X_des)'*Q*(X_cur-X_des) + (Ud(:,i_hor)-fi)'*(Ru)*(Ud(:,i_hor)-fi) ...
-        + 0.01*(norm(Kp,1)+norm(Kd,1)+norm(Kr,1)+norm(Kw,1)) + 10*norm(slack,1)...
-        + change*(norm(Kp(end)-Kp(end-1),1)) + change*(norm(Kr(end)-Kr(end-1),1));
+        + 0.01*(norm(Kp,1)+norm(Kd,1)+norm(Kr,1)+norm(Kw,1))...
+        + 10*norm(slack,1); ...
+        %+ change*(norm(Kp(end)-Kp(end-1),1)) + change*(norm(Kr(end)-Kr(end-1),1));
 
     Constraints = [
         % ES force constraint (in inertial frame)
-        f_net + Kp*ex + Kd*ev ...
-        == p.mass*([p.acc_d;0;0]) + p.mass*[0;0;p.g],
+        f_net + Kp*ex + Kd*ev + diag(Ki_pos)*eI_pos ...
+        == -p.mass*([p.acc_d;0;0]) + p.mass*[0;0;p.g],
 
         % ES moment constraint (in body frame) 
-        R'*(r1_hat*f1 + r2_hat*f2 + r3_hat*f3 + r4_hat*f4) == M_net_right,
+        (r1_hat*f1 + r2_hat*f2 + r3_hat*f3 + r4_hat*f4) == M_net_right,
 
         % Storage function constraint
-        STORAGE(end) <= value(STORAGE(end-1)) - slack(8), 
+        % STORAGE(end) <= value(STORAGE(end-1)), 
   
         % Friction constraints (using linear friction pyramid)
         -p.mu*fi_z <= fi_x <= p.mu*fi_z,
@@ -269,12 +284,14 @@ for ii = 1:MAX_ITER
         Kr(1) + Kr(3) >= slack(5),
         Kr(2) + Kr(3) >= slack(6),
         Kw >= slack(7),
-        slack >= 1e-6,
+        %Ki_pos >= slack(8),
+        %Ki_ang >= slack(9),
+        slack >= 1e-3,
         ];
         
     opt = sdpsettings('solver','mosek','verbose',2,'cachesolvers',1);
     sol = optimize(Constraints,Objective,opt);
-
+    
     u_ES = value(fi);
     
     % collect all the U_ES
@@ -287,7 +304,6 @@ for ii = 1:MAX_ITER
     % collect errors
     ER = [ER, eR_left];
     EW = [EW, eW_left];
-
 
     % collect all slack
     Slack = [Slack, value(slack)];
@@ -348,7 +364,18 @@ toc
 %     FSMout = [FSMout;repmat(FSM',[lent,1])];
 % end
 
-% past constraint which are not usefu
+% past constraint which are not useful
+%         % ES plane constraint 1 (in body frame) 
+%         r21' * (M_net_right - R'*r1_hat*f_net) == ...
+%         r21' * R'*((r2_hat-r1_hat)*f2 + (r3_hat-r1_hat)*f3 + (r4_hat-r1_hat)*f4),
+%         
+%         % ES plane constraint 2 (in body frame) 
+%         r31' * (M_net_right - R'*r1_hat*f_net) == ...
+%         r31' * R'*((r2_hat-r1_hat)*f2 + (r3_hat-r1_hat)*f3 + (r4_hat-r1_hat)*f4),
+%         
+%         % ES plane constraint 3 (in body frame) 
+%         r41' * (M_net_right - R'*r1_hat*f_net) == ...
+%         r41' * R'*((r2_hat-r1_hat)*f2 + (r3_hat-r1_hat)*f3 + (r4_hat-r1_hat)*f4),
 %% Animation
 % generate animation with ENERGY SHAPING Control with u_ES_out
 [t,EA,EAd] = fig_animate(tout,Xout,U_ES_out,Xdout,Udout,Uext,p);
@@ -357,7 +384,7 @@ toc
 %% Z direction foot forces
 figure()
 subplot(2,2,1)
-plot(Ud_ref(3,:),'--'); hold on;
+%plot(Ud_ref(3,:),'--'); hold on;
 plot(U_ES(3,:)); hold on;
 %plot(Ut_ref(3,:))
 title('Z direction foot force of front left foot')
@@ -367,7 +394,7 @@ legend('reference','energy shaping')
 hold off
 
 subplot(2,2,2)
-plot(Ud_ref(6,:),'--'); hold on;
+%plot(Ud_ref(6,:),'--'); hold on;
 plot(U_ES(6,:)); hold on;
 %plot(Ut_ref(6,:))
 title('Z direction foot force of front right foot')
@@ -377,7 +404,7 @@ legend('reference','energy shaping')
 hold off
 
 subplot(2,2,3)
-plot(Ud_ref(9,:),'--'); hold on;
+%plot(Ud_ref(9,:),'--'); hold on;
 plot(U_ES(9,:)); hold on;
 %plot(Ut_ref(9,:))
 title('Z direction foot force of rear left foot')
@@ -387,7 +414,7 @@ legend('reference','energy shaping')
 hold off
 
 subplot(2,2,4)
-plot(Ud_ref(12,:),'--'); hold on;
+%plot(Ud_ref(12,:),'--'); hold on;
 plot(U_ES(12,:)); hold on;
 %plot(Ut_ref(12,:))
 title('Z direction foot force of rear right foot')
@@ -400,7 +427,7 @@ hold off
 figure()
 subplot(2,2,1)
 plot(U_ES(1,:)); hold on;
-plot(Ut_ref(1,:))
+%plot(Ut_ref(1,:))
 title('X direction foot force of front left foot')
 xlabel('time (ms)')
 ylabel('force (N)')
@@ -409,7 +436,7 @@ hold off
 
 subplot(2,2,2)
 plot(U_ES(4,:)); hold on;
-plot(Ut_ref(4,:))
+%plot(Ut_ref(4,:))
 title('X direction foot force of front right foot')
 xlabel('time (ms)')
 ylabel('force (N)')
@@ -418,7 +445,7 @@ hold off
 
 subplot(2,2,3)
 plot(U_ES(7,:)); hold on;
-plot(Ut_ref(7,:))
+%plot(Ut_ref(7,:))
 title('X direction foot force of rear left foot')
 xlabel('time (ms)')
 ylabel('force (N)')
@@ -427,7 +454,7 @@ hold off
 
 subplot(2,2,4)
 plot(U_ES(10,:)); hold on;
-plot(Ut_ref(10,:))
+%plot(Ut_ref(10,:))
 title('X direction foot force of rear right foot')
 xlabel('time (ms)')
 ylabel('force (N)')
@@ -438,7 +465,7 @@ hold off
 figure()
 subplot(2,2,1)
 plot(U_ES(2,:)); hold on;
-plot(Ut_ref(2,:))
+%plot(Ut_ref(2,:))
 title('Y direction foot force of front left foot')
 xlabel('time (ms)')
 ylabel('force (N)')
@@ -447,7 +474,7 @@ hold off
 
 subplot(2,2,2)
 plot(U_ES(5,:)); hold on;
-plot(Ut_ref(5,:))
+%plot(Ut_ref(5,:))
 title('Y direction foot force of front right foot')
 xlabel('time (ms)')
 ylabel('force (N)')
@@ -456,7 +483,7 @@ hold off
 
 subplot(2,2,3)
 plot(U_ES(8,:)); hold on;
-plot(Ut_ref(8,:))
+%plot(Ut_ref(8,:))
 title('Y direction foot force of rear left foot')
 xlabel('time (ms)')
 ylabel('force (N)')
@@ -465,7 +492,7 @@ hold off
 
 subplot(2,2,4)
 plot(U_ES(11,:)); hold on;
-plot(Ut_ref(11,:))
+%plot(Ut_ref(11,:))
 title('Y direction foot force of rear right foot')
 xlabel('time (ms)')
 ylabel('force (N)')
