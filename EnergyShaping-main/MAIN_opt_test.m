@@ -54,7 +54,7 @@ MAX_ITER = floor(SimTimeDuration/p.simTimeStep);
 
 % desired trajectory
 p.acc_d = 0.5;
-p.vel_d = [0.5; 0];
+p.vel_d = [0.25; 0];
 p.yaw_d = 0;
 
 % --- initial condition ---
@@ -165,7 +165,7 @@ for ii = 1:MAX_ITER
 
     % set max values of fi_z
     Fzd = Ud([3 6 9 12],i_hor);
-    fi_z_lb = 0 * Fzd;
+    fi_z_lb = -2 * Fzd;
     fi_z_ub = 2 * Fzd;
 
     % set up selection matrix (makes problem infeasible)
@@ -182,8 +182,8 @@ for ii = 1:MAX_ITER
     Kd = sdpvar(3,3,'full');
     Kr = sdpvar(3,1); % fix
     Kw = sdpvar(3,3,'full');
-    Ki_pos = [1;1;1];
-    Ki_ang = [1;1;1];
+    Ki_pos = 1e1*[1;1;1];
+    Ki_ang = 1e1*[1;1;1];
     slack = sdpvar(7,1);
    
     KP = [KP, Kp];
@@ -218,7 +218,8 @@ for ii = 1:MAX_ITER
     
     % calculate overall net force and moment based on geometric control
     f_net = f1 + f2 + f3 + f4;
-    f_net = dot(f_net,R*[0;0;1]); %body frame
+    %f_net = dot(f_net,R*[0;0;1]); %body frame
+    %f_net = R'*f_net;
 
     M_net_right = -diag(Kr)*eR_right - Kw*eW_right - diag(Ki_ang)*eI_ang + hatMap(w)*p.J*(R_error_right'*wd);
     %M_net_left = -Rd'*diag(Kr)*eR_left - Kw*eW_left + hatMap(wd)*p.J*w;
@@ -242,7 +243,7 @@ for ii = 1:MAX_ITER
     Qr = 1e6*eye(9);
     Qw = 1e6*eye(3);
     Q = blkdiag(Qx, Qv, Qr, Qw);
-    Ru = 1*eye(3); % Ru for one f
+    Ru = diag([1e-6;1e-6;1e-2]); % Ru for one f
     Ru = blkdiag(Ru, Ru, Ru, Ru);
 
     % warm start
@@ -250,9 +251,11 @@ for ii = 1:MAX_ITER
     %assign(Kp,Kp_nom);
     %assign(Kr,Kr_nom);   
 
-    Objective = (X_cur-X_des)'*Q*(X_cur-X_des) + (Ud(:,i_hor)-fi)'*(Ru)*(Ud(:,i_hor)-fi) ...
-        + 1*(norm(Kp,1)+norm(Kd,1)+norm(Kr,1)+norm(Kw,1))...
-        + 1*norm(slack,1); ...
+    Objective = (X_cur-X_des)'*Q*(X_cur-X_des) ...
+        + (Ud(:,i_hor)-fi)'*(Ru)*(Ud(:,i_hor)-fi) ...
+        + 1*(norm(Kp,1)+norm(Kd,1))...
+        + 1*(norm(Kr,1)+norm(Kw,1))...
+        + 1e3*norm(slack,1); ...
         %+ change*(norm(Kp(end)-Kp(end-1),1)) + change*(norm(Kr(end)-Kr(end-1),1));
 
     Constraints = [
@@ -261,7 +264,7 @@ for ii = 1:MAX_ITER
         == -p.mass*([p.acc_d;0;0]) + p.mass*[0;0;p.g],
 
         % ES moment constraint (in body frame) 
-        (r1_hat*f1 + r2_hat*f2 + r3_hat*f3 + r4_hat*f4) == M_net_right,
+        R'*(r1_hat*f1 + r2_hat*f2 + r3_hat*f3 + r4_hat*f4) == M_net_right,
 
         % Storage function constraint
         % STORAGE(end) <= value(STORAGE(end-1)), 
@@ -284,9 +287,7 @@ for ii = 1:MAX_ITER
         Kr(1) + Kr(3) >= slack(5),
         Kr(2) + Kr(3) >= slack(6),
         Kw >= slack(7),
-        %Ki_pos >= slack(8),
-        %Ki_ang >= slack(9),
-        slack >= 1e-3,
+        slack >= 1e-6,
         ];
         
     opt = sdpsettings('solver','mosek','verbose',2,'cachesolvers',1);
